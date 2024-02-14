@@ -1,7 +1,4 @@
 use rusqlite::{Connection, Result};
-use clap::{arg, error::{ContextKind, ErrorKind}, Command};
-use std::env;
-use comfy_table::{Table, Cell, Color};
 use crate::todo::Todo;
 
 pub fn add_todo(conn: &Connection, title: String) -> Result<()> {
