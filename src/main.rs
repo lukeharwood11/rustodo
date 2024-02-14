@@ -167,41 +167,37 @@ fn main() -> Result<()> {
     let connection_path = env::var("RUSTODO_DB_PATH").unwrap_or_else(|_| panic!("RUSTODO_DB_PATH not set"));
     let conn = Connection::open(connection_path)?;
     if config_required(&conn)? {
-        println!("Initialising database.");
+        println!("Initializing database.");
         db_init(&conn)?;
     }
     match cli().get_matches().subcommand() {
         None => {
             // print todos
             let todos = get_todos(&conn)?;
-            if todos.len() == 0 {
-                println!("No todos found!");
-            } else {
-                let mut table = Table::new();
-                table.set_header(vec!["ID", "Todo", "Completed", "Owner", "Created At", "Updated At"]);
 
-                for todo in todos {
-                    let row = vec![
-                        todo.row_id.to_string(),
-                        todo.title,
-                        if todo.completed {"yes".to_string() } else { "nope".to_string() },
-                        todo.owner,
-                        todo.updated_at,
-                        todo.created_at,
-                    ];
-                    table.add_row(
-                        row.iter().map(|c| Cell::new(c).bg(
-                            if todo.completed {
-                                Color::Green
-                            } else {
-                                Color::Red
-                            }
-                        ).fg(
-                            Color::White
-                        ))
-                    );
-                }
-            
+            let mut table = Table::new();
+            table.set_header(vec!["ID", "Todo", "Completed", "Owner", "Created At", "Updated At"]);
+
+            for todo in todos {
+                let row: Vec<String> = vec![
+                    todo.row_id.to_string(),
+                    todo.title,
+                    if todo.completed {"yes".to_string() } else { "nope".to_string() },
+                    todo.owner,
+                    todo.updated_at,
+                    todo.created_at,
+                ];
+                table.add_row(
+                    row.iter().map(|c| Cell::new(c).bg(
+                        if todo.completed {
+                            Color::Green
+                        } else {
+                            Color::Red
+                        }
+                    ).fg(
+                        Color::White
+                    ))
+                );            
                 println!("{table}");
             }
         },
@@ -229,7 +225,7 @@ fn main() -> Result<()> {
                     let todos = get_todos(&conn)?;
                     let todo = todos.iter().find(|t| t.row_id == id);
                     if let Some(todo) = todo {
-                        let mut todo = Todo::new(
+                        let todo = Todo::new(
                             todo.row_id,
                             todo.title.clone(),
                             true,
@@ -251,9 +247,13 @@ fn main() -> Result<()> {
         },
         Some(("update", x)) => println!("update - {x:?}"),
         Some(("reset", x)) => {
-            if x.contains_id("force") {
-                db_init(&conn)?;
-                println!("Resetting todo application.");
+            if let Some(force) = x.get_one::<bool>("force") {
+                if *force {
+                    db_init(&conn)?;
+                    println!("Resetting database!");
+                } else {
+                    println!("You must use the --force (-f) flag to reset the database");
+                }
             }
         },
         x @ _ => println!("{:?}", x),
