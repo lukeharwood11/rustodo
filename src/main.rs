@@ -1,9 +1,24 @@
 use rusqlite::{Connection, Result};
-use clap::{arg, Command};
+use clap::{arg, error::{ContextKind, ErrorKind}, Command};
+use std::env;
+use comfy_table::{Table, Cell, Color};
+
+const TODO_STRING: &'static str = r#"
+
+/$$$$$$$                        /$$                     /$$          
+| $$__  $$                      | $$                    | $$          
+| $$  \ $$ /$$   /$$  /$$$$$$$ /$$$$$$    /$$$$$$   /$$$$$$$  /$$$$$$ 
+| $$$$$$$/| $$  | $$ /$$_____/|_  $$_/   /$$__  $$ /$$__  $$ /$$__  $$
+| $$__  $$| $$  | $$|  $$$$$$   | $$    | $$  \ $$| $$  | $$| $$  \ $$
+| $$  \ $$| $$  | $$ \____  $$  | $$ /$$| $$  | $$| $$  | $$| $$  | $$
+| $$  | $$|  $$$$$$/ /$$$$$$$/  |  $$$$/|  $$$$$$/|  $$$$$$$|  $$$$$$/
+|__/  |__/ \______/ |_______/    \___/   \______/  \_______/ \______/ 
+"#;
 
 fn cli() -> Command {
     Command::new("todo")
         .about("Todo application")
+        .long_about(TODO_STRING)
         .subcommand(
             Command::new("reset")
                 .about("Reset the current state of the todo application")
@@ -31,6 +46,14 @@ fn cli() -> Command {
                 .alias("up")
                 .arg(
                     arg!(<TODO_ID> "Update a todo")
+                )
+        )
+        .subcommand(
+            Command::new("complete")
+                .about("Complete a todo")
+                .alias("done")
+                .arg(
+                    arg!(<TODO_ID> "The id of the todo to complete")
                 )
         )
 }
@@ -65,11 +88,34 @@ impl Todo {
 }
 
 fn add_todo(conn: &Connection, title: String) -> Result<()> {
-    conn
-        .execute(
-            "INSERT INTO Todo (title"
-        )
+    conn.execute(
+        "INSERT INTO Todo (title, owner) VALUES (?1, ?2)",
+        (title, "Luke Harwood"),
+    )?;
+    Ok(())
 }
+
+fn remove_todo(conn: &Connection, id: u32) -> Result<()> {
+
+    conn.execute(
+        "DELETE FROM Todo WHERE row_id = ?1",
+        (id,)
+    )?;
+    Ok(())
+}
+
+fn update_todo(
+    conn: &Connection,
+    todo: Todo,
+) -> Result<()> {
+    conn.execute(
+        "UPDATE Todo SET title = ?1, completed = ?2, updated_at = current_timestamp WHERE row_id = ?3",
+        (todo.title, todo.completed, todo.row_id),
+    )?;
+    Ok(())
+}
+
+// TODO: implement config for owner/metadata
 
 fn get_todos(conn: &Connection) -> Result<Vec<Todo>> {
     let mut stmt = conn
@@ -91,37 +137,125 @@ fn get_todos(conn: &Connection) -> Result<Vec<Todo>> {
     )
 }
 
-const HOME_PATH: &'static str = "/Users/lukeharwood/.config/todo/todo.db";
+fn config_required(conn: &Connection) -> Result<bool> {
+    let mut stmt = conn.prepare("
+        SELECT name FROM sqlite_master
+        WHERE type='table' AND name='Todo'
+    ")?;
+    let mut rows = stmt.query([])?;
+    Ok(rows.next()?.is_none())
+}
+
+// const HOME_PATH: &'static str = "/Users/lukeharwood/.config/todo/todo.db";
 
 fn db_init(conn: &Connection) -> Result<()> {
     // create tables
     conn.execute("DROP TABLE IF EXISTS Todo", ())?;
     conn.execute("CREATE TABLE Todo (
-    row_id INTEGER PRIMARY KEY ASC,
-    title VARCHAR(100),
-    completed BOOL DEFAULT FALSE,
-    owner VARCHAR(100),
-    updated_at DATETIME DEFAULT current_timestamp,
-    created_at DATETIME DEFAULT current_timestamp)",
+        row_id INTEGER PRIMARY KEY ASC,
+        title VARCHAR(100),
+        completed BOOL DEFAULT FALSE,
+        owner VARCHAR(100),
+        updated_at DATETIME DEFAULT current_timestamp,
+        created_at DATETIME DEFAULT current_timestamp)",
         (),
     )?;
     Ok(())
 }
 
 fn main() -> Result<()> {
-    let conn = Connection::open(HOME_PATH)?;
-    db_init(&conn)?;
+    let connection_path = env::var("RUSTODO_DB_PATH").unwrap_or_else(|_| panic!("RUSTODO_DB_PATH not set"));
+    let conn = Connection::open(connection_path)?;
+    if config_required(&conn)? {
+        println!("Initialising database.");
+        db_init(&conn)?;
+    }
     match cli().get_matches().subcommand() {
-        None => println!("No matches..."),
+        None => {
+            // print todos
+            let todos = get_todos(&conn)?;
+            if todos.len() == 0 {
+                println!("No todos found!");
+            } else {
+                let mut table = Table::new();
+                table.set_header(vec!["ID", "Todo", "Completed", "Owner", "Created At", "Updated At"]);
+
+                for todo in todos {
+                    let row = vec![
+                        todo.row_id.to_string(),
+                        todo.title,
+                        if todo.completed {"yes".to_string() } else { "nope".to_string() },
+                        todo.owner,
+                        todo.updated_at,
+                        todo.created_at,
+                    ];
+                    table.add_row(
+                        row.iter().map(|c| Cell::new(c).bg(
+                            if todo.completed {
+                                Color::Green
+                            } else {
+                                Color::Red
+                            }
+                        ).fg(
+                            Color::White
+                        ))
+                    );
+                }
+            
+                println!("{table}");
+            }
+        },
         Some(("add", x)) => {
             if let Some(todo) = x.get_one::<String>("TODO") {
-                println!("Adding {todo}")
+                add_todo(&conn, todo.to_owned())?;
+                println!("Added todo: '{todo}'!", todo=todo);
             }
         },
         Some(("remove", x)) => {
-
+            if let Some(id) = x.get_one::<String>("TODO_ID") {
+                if let Ok(id) = id.parse::<u32>() {
+                    remove_todo(&conn, id)?;
+                    println!("Removed todo: {id}!", id=id);
+                } else {
+                    let mut err = clap::Error::new(ErrorKind::InvalidValue);
+                    err.insert(ContextKind::InvalidValue, clap::error::ContextValue::String("TODO_ID".to_string()));
+                    let _ = err.print();
+                }
+            }
+        },
+        Some(("complete", x)) => {
+            if let Some(id) = x.get_one::<String>("TODO_ID") {
+                if let Ok(id) = id.parse::<u32>() {
+                    let todos = get_todos(&conn)?;
+                    let todo = todos.iter().find(|t| t.row_id == id);
+                    if let Some(todo) = todo {
+                        let mut todo = Todo::new(
+                            todo.row_id,
+                            todo.title.clone(),
+                            true,
+                            todo.owner.clone(),
+                            todo.updated_at.clone(),
+                            todo.created_at.clone(),
+                        );
+                        update_todo(&conn, todo)?;
+                        println!("Completed todo: {id}!", id=id);
+                    } else {
+                        println!("No todo found with id: {id}!", id=id);
+                    }
+                } else {
+                    let mut err = clap::Error::new(ErrorKind::InvalidValue);
+                    err.insert(ContextKind::InvalidValue, clap::error::ContextValue::String("TODO_ID".to_string()));
+                    let _ = err.print();
+                }
+            }
         },
         Some(("update", x)) => println!("update - {x:?}"),
+        Some(("reset", x)) => {
+            if x.contains_id("force") {
+                db_init(&conn)?;
+                println!("Resetting todo application.");
+            }
+        },
         x @ _ => println!("{:?}", x),
     }
     Ok(())
