@@ -177,7 +177,6 @@ fn main() -> Result<()> {
 
             let mut table = Table::new();
             table.set_header(vec!["ID", "Todo", "Completed", "Owner", "Created At", "Updated At"]);
-
             for todo in todos {
                 let row: Vec<String> = vec![
                     todo.row_id.to_string(),
@@ -198,8 +197,8 @@ fn main() -> Result<()> {
                         Color::White
                     ))
                 );            
-                println!("{table}");
             }
+            println!("{table}");
         },
         Some(("add", x)) => {
             if let Some(todo) = x.get_one::<String>("TODO") {
